@@ -1,2 +1,27 @@
 # model-api
 模型推理服务_python
+
+## FastAPI 服务
+
+### 依赖安装
+
+```powershell
+pip install -r requirements.txt
+```
+
+### 启动服务
+
+```powershell
+python api_server.py
+```
+
+服务启动后：
+- `POST /predict`
+- `POST /predict/batch`
+- `POST /process/folder`
+
+### 本地冒烟测试
+
+```powershell
+python smoke_test.py
+```

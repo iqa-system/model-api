@@ -1,0 +1,243 @@
+openapi: 3.1.0
+info:
+  title: LIQE API
+  version: "1.0"
+  description: |
+    LIQE 图像质量评估服务. 提供单图推理,批量推理,以及本地文件夹批处理导出.
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+paths:
+  /predict:
+    post:
+      summary: 单张图片推理
+      description: 上传单张图片并返回质量评分,场景与失真类型.
+      tags:
+        - inference
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+            encoding:
+              file:
+                contentType: image/*
+      responses:
+        "200":
+          description: 推理成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PredictResult"
+              examples:
+                success:
+                  summary: 成功示例
+                  value:
+                    file_name: "toothless.jpg"
+                    quality_score: 54.321
+                    scene: "outdoor"
+                    distortion: "blur"
+        "400":
+          description: 请求无效或图片读取失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              examples:
+                invalid_image:
+                  summary: 图片读取失败
+                  value:
+                    detail: "图片读取失败: toothless.jpg"
+  /predict/batch:
+    post:
+      summary: 多张图片批量推理
+      description: 上传多张图片并返回每张图片的推理结果.
+      tags:
+        - inference
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - files
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+            encoding:
+              files:
+                contentType: image/*
+      responses:
+        "200":
+          description: 推理成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchPredictResponse"
+              examples:
+                success:
+                  summary: 成功示例
+                  value:
+                    results:
+                      - file_name: "a.jpg"
+                        quality_score: 61.0
+                        scene: "indoor"
+                        distortion: "noise"
+                      - file_name: "b.jpg"
+                        quality_score: 47.8
+                        scene: "outdoor"
+                        distortion: "blur"
+        "400":
+          description: 请求无效或图片读取失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              examples:
+                empty_files:
+                  summary: 未提供图片文件列表
+                  value:
+                    detail: "未提供图片文件列表"
+  /process/folder:
+    post:
+      summary: 本地文件夹批处理
+      description: |
+        传入本地文件夹路径与输出文件路径,服务端批量处理并写出 CSV 或 Excel.
+      tags:
+        - batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessFolderRequest"
+            examples:
+              default:
+                summary: 示例
+                value:
+                  input_path: "D:/data/images"
+                  output_path: "D:/data/output/result.csv"
+      responses:
+        "200":
+          description: 处理完成
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessFolderResult"
+              examples:
+                success:
+                  summary: 成功示例
+                  value:
+                    input_path: "D:/data/images"
+                    output_path: "D:/data/output/result.csv"
+                    total_images: 120
+                    processed_images: 118
+                    skipped_images: 2
+        "400":
+          description: 文件夹为空或没有可用结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              examples:
+                no_images:
+                  summary: 文件夹无图片
+                  value:
+                    detail: "文件夹中未找到图片"
+        "404":
+          description: 输入文件夹不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPError"
+              examples:
+                not_found:
+                  summary: 路径不存在
+                  value:
+                    detail: "输入文件夹不存在: D:/data/images"
+components:
+  schemas:
+    PredictResult:
+      type: object
+      required:
+        - quality_score
+        - scene
+        - distortion
+      properties:
+        file_name:
+          type: string
+          nullable: true
+          description: 原始文件名
+        quality_score:
+          type: number
+          format: float
+          description: 质量评分
+        scene:
+          type: string
+          description: 场景类别
+        distortion:
+          type: string
+          description: 失真类型
+    BatchPredictResponse:
+      type: object
+      required:
+        - results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/PredictResult"
+    ProcessFolderRequest:
+      type: object
+      required:
+        - input_path
+        - output_path
+      properties:
+        input_path:
+          type: string
+          description: 本地图片文件夹路径
+        output_path:
+          type: string
+          description: 输出 CSV 或 Excel 的路径
+    ProcessFolderResult:
+      type: object
+      required:
+        - input_path
+        - output_path
+        - total_images
+        - processed_images
+        - skipped_images
+      properties:
+        input_path:
+          type: string
+        output_path:
+          type: string
+        total_images:
+          type: integer
+          description: 输入文件夹的图片总数
+        processed_images:
+          type: integer
+          description: 成功处理的图片数
+        skipped_images:
+          type: integer
+          description: 失败或跳过的图片数
+    HTTPError:
+      type: object
+      required:
+        - detail
+      properties:
+        detail:
+          type: string
+          description: 错误信息
+
