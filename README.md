@@ -1,5 +1,6 @@
 # model-api
 模型推理服务_python
+- 参考文献: https://github.com/zwx8981/LIQE
 
 ## FastAPI 服务
 

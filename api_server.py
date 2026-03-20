@@ -119,6 +119,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LIQE API", version="1.0", lifespan=lifespan)  # FastAPI 应用实例
 
+@app.get("/health")
+def health_check() -> dict:
+    # 健康检查接口,可用于负载均衡器或监控系统
+    return {"status": "ok", "model_loaded": bool(app.state.model)}
+
 
 @app.post("/predict", response_model=PredictResult)
 async def predict(file: UploadFile = File(...)) -> PredictResult:
