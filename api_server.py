@@ -21,8 +21,8 @@ class PredictResult(BaseModel):
     # 单张图片推理的响应结构
     file_name: str | None = None
     quality_score: float
-    scene: str
-    distortion: str
+    scene: int
+    distortion: int
 
 
 class BatchPredictResponse(BaseModel):
@@ -69,9 +69,13 @@ def _predict_image(model: LIQE, device: torch.device, img: Image.Image) -> Predi
     # ToTensor 会将 PIL.Image 转为 [0,1] 的 float Tensor
     img_tensor = ToTensor()(img).unsqueeze(0).to(device)
     with torch.no_grad():
-        # 模型输出: 质量分数,场景,失真类型
+        # 模型输出: 质量分数,场景编码,失真编码
         q, s, d = model(img_tensor)
-    return PredictResult(quality_score=float(q.item()), scene=str(s), distortion=str(d))
+    return PredictResult(
+        quality_score=float(q.item()),
+        scene=int(s.item()),
+        distortion=int(d.item()),
+    )
 
 
 async def _read_upload_image(file: UploadFile) -> Image.Image:

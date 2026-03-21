@@ -42,8 +42,8 @@ paths:
                   value:
                     file_name: "toothless.jpg"
                     quality_score: 54.321
-                    scene: "outdoor"
-                    distortion: "blur"
+                    scene: 4
+                    distortion: 3
         "400":
           description: 请求无效或图片读取失败
           content:
@@ -92,12 +92,12 @@ paths:
                     results:
                       - file_name: "a.jpg"
                         quality_score: 61.0
-                        scene: "indoor"
-                        distortion: "noise"
+                        scene: 3
+                        distortion: 2
                       - file_name: "b.jpg"
                         quality_score: 47.8
-                        scene: "outdoor"
-                        distortion: "blur"
+                        scene: 4
+                        distortion: 3
         "400":
           description: 请求无效或图片读取失败
           content:
@@ -184,11 +184,11 @@ components:
           format: float
           description: 质量评分
         scene:
-          type: string
-          description: 场景类别
+          type: integer
+          description: 场景类别编码
         distortion:
-          type: string
-          description: 失真类型
+          type: integer
+          description: 失真类型编码
     BatchPredictResponse:
       type: object
       required:

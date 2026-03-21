@@ -60,8 +60,8 @@ def batch_process_liqe(img_dir, ckpt_path, output_file):
                 results.append({
                     'image_name': filename,
                     'quality_score': q.item(),
-                    'scene': s,
-                    'distortion': d
+                    'scene': int(s.item()),
+                    'distortion': int(d.item())
                 })
             except Exception as e:
                 print(f"\n跳过损坏图片 {filename}: {e}")

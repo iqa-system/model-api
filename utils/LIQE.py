@@ -10,13 +10,14 @@ from torchvision.transforms import Normalize
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-dists = ['jpeg2000 compression', 'jpeg compression', 'white noise', 'gaussian blur', 'fastfading', 'fnoise', 'contrast', 'lens', 'motion', 'diffusion', 'shifting',
-         'color quantization', 'oversaturation', 'desaturation', 'white with color', 'impulse', 'multiplicative',
-         'white noise with denoise', 'brighten', 'darken', 'shifting the mean', 'jitter', 'noneccentricity patch',
-         'pixelate', 'quantization', 'color blocking', 'sharpness', 'realistic blur', 'realistic noise',
-         'underexposure', 'overexposure', 'realistic contrast change', 'other realistic']
-
 scenes = ['animal', 'cityscape', 'human', 'indoor', 'landscape', 'night', 'plant', 'still_life', 'others']
+scene2label = {'animal':0, 'cityscape':1, 'human':2, 'indoor':3, 'landscape':4, 'night':5, 'plant':6, 'still_life':7, 'others':8}
+
+map2label = {'jpeg2000 compression':0, 'jpeg compression':1, 'noise':2, 'blur':3, 'color':4,
+             'contrast':5, 'overexposure':6, 'underexposure':7, 'spatial':8, 'quantization':9, 'other':10}
+dists_map = ['jpeg2000 compression', 'jpeg compression', 'noise', 'blur', 'color', 'contrast', 'overexposure',
+            'underexposure', 'spatial', 'quantization', 'other']
+
 qualitys = ['bad', 'poor', 'fair', 'good', 'perfect']
 
 type2label = {'jpeg2000 compression':0, 'jpeg compression':1, 'white noise':2, 'gaussian blur':3, 'fastfading':4, 'fnoise':5, 'contrast':6, 'lens':7, 'motion':8,
@@ -36,15 +37,11 @@ dist_map = {'jpeg2000 compression':'jpeg2000 compression', 'jpeg compression':'j
                    'color blocking':'spatial', 'sharpness':'contrast', 'realistic blur':'blur', 'realistic noise':'noise',
                    'underexposure':'underexposure', 'overexposure':'overexposure', 'realistic contrast change':'contrast', 'other realistic':'other'}
 
-map2label = {'jpeg2000 compression':0, 'jpeg compression':1, 'noise':2, 'blur':3, 'color':4,
-             'contrast':5, 'overexposure':6, 'underexposure':7, 'spatial':8, 'quantization':9, 'other':10}
-
-dists_map = ['jpeg2000 compression', 'jpeg compression', 'noise', 'blur', 'color', 'contrast', 'overexposure',
-            'underexposure', 'spatial', 'quantization', 'other']
-
-scene2label = {'animal':0, 'cityscape':1, 'human':2, 'indoor':3, 'landscape':4, 'night':5, 'plant':6, 'still_life':7,
-               'others':8}
-
+dists = ['jpeg2000 compression', 'jpeg compression', 'white noise', 'gaussian blur', 'fastfading', 'fnoise', 'contrast', 'lens', 'motion', 'diffusion', 'shifting',
+         'color quantization', 'oversaturation', 'desaturation', 'white with color', 'impulse', 'multiplicative',
+         'white noise with denoise', 'brighten', 'darken', 'shifting the mean', 'jitter', 'noneccentricity patch',
+         'pixelate', 'quantization', 'color blocking', 'sharpness', 'realistic blur', 'realistic noise',
+         'underexposure', 'overexposure', 'realistic contrast change', 'other realistic']
 
 class LIQE(nn.Module):
     def __init__(self, ckpt, device):
@@ -103,13 +100,11 @@ class LIQE(nn.Module):
         distortion_index = similarity_distortion.argmax(dim=1)
         scene_index = similarity_scene.argmax(dim=1)
 
-        scene = scenes[scene_index]
-        distortion = dists_map[distortion_index]
-
         quality = 1 * logits_quality[:, 0] + 2 * logits_quality[:, 1] + 3 * logits_quality[:, 2] + \
                              4 * logits_quality[:, 3] + 5 * logits_quality[:, 4]
 
-        return quality, scene, distortion
+        # Return class codes so downstream services can use stable numeric values.
+        return quality, scene_index, distortion_index
 
 if __name__ == '__main__':
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'

@@ -1,0 +1,4 @@
+﻿image_name,quality_score,scene,distortion
+toothless.jpg,1.7296149730682373,still_life,noise
+toothless_blur.jpg,1.0025358200073242,human,blur
+toothless_mosaic.jpg,1.4003850221633911,others,spatial
