@@ -1,4 +1,5 @@
 import os
+import json
 from io import BytesIO
 from typing import List
 from contextlib import asynccontextmanager
@@ -17,12 +18,19 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许读取被截断的图片
 VALID_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff")  # 批量处理允许的扩展名
 
 
+class DistortionProb(BaseModel):
+    # 失真类型概率项
+    index: int
+    prob: float
+
+
 class PredictResult(BaseModel):
     # 单张图片推理的响应结构
     file_name: str | None = None
     quality_score: float
     scene: int
     distortion: int
+    distortions: List[DistortionProb]
 
 
 class BatchPredictResponse(BaseModel):
@@ -69,12 +77,14 @@ def _predict_image(model: LIQE, device: torch.device, img: Image.Image) -> Predi
     # ToTensor 会将 PIL.Image 转为 [0,1] 的 float Tensor
     img_tensor = ToTensor()(img).unsqueeze(0).to(device)
     with torch.no_grad():
-        # 模型输出: 质量分数,场景编码,失真编码
-        q, s, d = model(img_tensor)
+        # 模型输出: 质量分数,场景编码,兼容失真编码,失真概率列表
+        q, s, d, ds = model(img_tensor)
+    distortion_items = [DistortionProb(index=item["index"], prob=item["prob"]) for item in ds[0]]
     return PredictResult(
         quality_score=float(q.item()),
         scene=int(s.item()),
-        distortion=int(d.item()),
+        distortion=distortion_items[0].index,
+        distortions=distortion_items,
     )
 
 
@@ -183,6 +193,11 @@ def process_folder(payload: ProcessFolderRequest) -> ProcessFolderResult:
                     "quality_score": pred.quality_score,
                     "scene": pred.scene,
                     "distortion": pred.distortion,
+                    "distortions": json.dumps(
+                        [{"index": item.index, "prob": item.prob} for item in pred.distortions],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 }
             )
         except Exception:  # noqa: BLE001

@@ -19,10 +19,3 @@ python api_server.py
 服务启动后：
 - `POST /predict`
 - `POST /predict/batch`
-- `POST /process/folder`
-
-### 本地冒烟测试
-
-```powershell
-python smoke_test.py
-```

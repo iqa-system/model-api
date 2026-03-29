@@ -44,6 +44,11 @@ paths:
                     quality_score: 54.321
                     scene: 4
                     distortion: 3
+                    distortions:
+                      - index: 3
+                        prob: 0.4213
+                      - index: 2
+                        prob: 0.1532
         "400":
           description: 请求无效或图片读取失败
           content:
@@ -94,10 +99,18 @@ paths:
                         quality_score: 61.0
                         scene: 3
                         distortion: 2
+                        distortions:
+                          - index: 2
+                            prob: 0.6124
+                          - index: 5
+                            prob: 0.1701
                       - file_name: "b.jpg"
                         quality_score: 47.8
                         scene: 4
                         distortion: 3
+                        distortions:
+                          - index: 3
+                            prob: 0.5120
         "400":
           description: 请求无效或图片读取失败
           content:
@@ -168,12 +181,25 @@ paths:
                     detail: "输入文件夹不存在: D:/data/images"
 components:
   schemas:
+    DistortionProb:
+      type: object
+      required:
+        - index
+        - prob
+      properties:
+        index:
+          type: integer
+          description: 失真类型编码
+        prob:
+          type: number
+          description: 失真概率(四舍五入到4位小数)
     PredictResult:
       type: object
       required:
         - quality_score
         - scene
         - distortion
+        - distortions
       properties:
         file_name:
           type: string
@@ -188,7 +214,12 @@ components:
           description: 场景类别编码
         distortion:
           type: integer
-          description: 失真类型编码
+          description: 兼容字段,等于 distortions[0].index
+        distortions:
+          type: array
+          description: 概率>=0.10的失真列表,为空时返回top1
+          items:
+            $ref: "#/components/schemas/DistortionProb"
     BatchPredictResponse:
       type: object
       required:

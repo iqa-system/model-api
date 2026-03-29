@@ -1,4 +1,6 @@
-﻿image_name,quality_score,scene,distortion
-toothless.jpg,1.7296149730682373,still_life,noise
-toothless_blur.jpg,1.0025358200073242,human,blur
-toothless_mosaic.jpg,1.4003850221633911,others,spatial
+﻿image_name,quality_score,scene,distortion,distortions
+IMG_20250825_121118.jpg,3.0746593475341797,4,3,"[{""index"":3,""prob"":0.758},{""index"":10,""prob"":0.2316}]"
+toothless-shrunken.jpg,4.941667556762695,0,1,"[{""index"":1,""prob"":0.9786}]"
+toothless.jpg,2.2157320976257324,0,1,"[{""index"":1,""prob"":0.6991},{""index"":2,""prob"":0.2343}]"
+toothless_blur.jpg,2.0420029163360596,0,1,"[{""index"":1,""prob"":0.7463},{""index"":3,""prob"":0.1345},{""index"":2,""prob"":0.1154}]"
+toothless_mosaic.jpg,2.1749911308288574,0,1,"[{""index"":1,""prob"":0.8569}]"

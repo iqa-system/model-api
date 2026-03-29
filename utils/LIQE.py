@@ -1,14 +1,16 @@
-import torch
-import numpy as np
-import clip
-import random
 from itertools import product
-from PIL import Image, ImageFile
-import torch.nn.functional as F
+
+import clip
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from PIL import ImageFile
 from torchvision.transforms import Normalize
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+# 失真类型概率阈值, 超过该阈值的失真类型将被保留; 如果没有任何失真类型超过该阈值, 则保留概率最高的一个失真类型
+DISTORTION_PROB_THRESHOLD = 0.10
 
 scenes = ['animal', 'cityscape', 'human', 'indoor', 'landscape', 'night', 'plant', 'still_life', 'others']
 scene2label = {'animal':0, 'cityscape':1, 'human':2, 'indoor':3, 'landscape':4, 'night':5, 'plant':6, 'still_life':7, 'others':8}
@@ -69,7 +71,7 @@ class LIQE(nn.Module):
         x = self.normalize(x)
         x = x.unfold(2, 224, self.step).unfold(3, 224, self.step).permute(0, 2, 3, 1, 4, 5).reshape(batch_size, -1, 3, 224, 224)
 
-        sel_step = x.size(0) // self.num_patch
+        sel_step = x.size(1) // self.num_patch
         sel = torch.zeros(self.num_patch)
         for i in range(self.num_patch):
             sel[i] = sel_step * i
@@ -97,19 +99,41 @@ class LIQE(nn.Module):
 
         similarity_scene = logits_per_image.sum(3).sum(1)
         similarity_distortion = logits_per_image.sum(1).sum(1)
-        distortion_index = similarity_distortion.argmax(dim=1)
         scene_index = similarity_scene.argmax(dim=1)
+
+        # print('similarity_scene = ', similarity_scene)
+
+        # 保留所有概率超过阈值的失真类型; 如果没有任何失真类型超过该阈值, 则保留概率最高的一个失真类型
+        distortions = []
+        distortion_top1 = []
+        for sample_probs in similarity_distortion:
+            candidates = []
+            for idx, prob in enumerate(sample_probs.tolist()):
+                prob = float(prob)
+                if prob >= DISTORTION_PROB_THRESHOLD:
+                    candidates.append((idx, prob))
+
+            if not candidates:
+                top_idx = int(sample_probs.argmax().item())
+                candidates = [(top_idx, float(sample_probs[top_idx].item()))]
+            else:
+                candidates.sort(key=lambda x: x[1], reverse=True)
+
+            selected = [{"index": idx, "prob": round(prob, 4)} for idx, prob in candidates]
+            distortions.append(selected)
+            distortion_top1.append(selected[0]["index"])
+
+        distortion_top1 = torch.tensor(distortion_top1, dtype=torch.long, device=similarity_distortion.device)
 
         quality = 1 * logits_quality[:, 0] + 2 * logits_quality[:, 1] + 3 * logits_quality[:, 2] + \
                              4 * logits_quality[:, 3] + 5 * logits_quality[:, 4]
 
-        # Return class codes so downstream services can use stable numeric values.
-        return quality, scene_index, distortion_index
+        return quality, scene_index, distortion_top1, distortions
 
 if __name__ == '__main__':
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    ckpt = './LIQE.pt'
+    ckpt = '../weights/LIQE.pt'
     liqe = LIQE(ckpt, device)
 
     x = torch.randn(1,3,512,512).to(device)
-    q, s, d = liqe(x)
+    q, s, d, ds = liqe(x)
