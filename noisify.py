@@ -84,25 +84,25 @@ if __name__ == '__main__':
     # 测试代码样例
     import os
     
-    test_img_path = 'test_imgs/toothless.jpg'
+    test_img_path = 'test_imgs/human.jpg'  # 替换为你的测试图片路径
     out_dir = 'test_imgs'
     
     if os.path.exists(test_img_path):
         img = Image.open(test_img_path).convert('RGB')
         
         # 测试 1: 加高斯模糊 (如起点在100,100，区域大小200x200，模糊半径10)
-        blur_img = add_gaussian_blur(img, x=100, y=100, width=200, height=200, radius=10.0)
-        blur_img.save(os.path.join(out_dir, 'toothless_blur.jpg'))
+        blur_img = add_gaussian_blur(img, x=100, y=10, width=80, height=90, radius=5.0)
+        blur_img.save(os.path.join(out_dir, 'human_blur_partial.jpg'))
         
         # 测试 2: 加马赛克 (如起点在300,100，区域大小200x200，马赛克块大小15)
-        mosaic_img = add_mosaic(img, x=300, y=100, width=200, height=200, pixel_size=15)
-        mosaic_img.save(os.path.join(out_dir, 'toothless_mosaic.jpg'))
+        mosaic_img = add_mosaic(img, x=100, y=10, width=80, height=90, pixel_size=15)
+        mosaic_img.save(os.path.join(out_dir, 'human_mosaic_partial.jpg'))
         
         # 测试 3: 全图加模糊/马赛克
-        full_blur_img = add_gaussian_blur(img, radius=10.0)
-        full_blur_img.save(os.path.join(out_dir, 'toothless_full_blur.jpg'))
+        # full_blur_img = add_gaussian_blur(img, radius=3.0)
+        # full_blur_img.save(os.path.join(out_dir, 'human_blur.jpg'))
         
-        full_mosaic_img = add_mosaic(img, pixel_size=15)
-        full_mosaic_img.save(os.path.join(out_dir, 'toothless_full_mosaic.jpg'))
+        # full_mosaic_img = add_mosaic(img, pixel_size=3)
+        # full_mosaic_img.save(os.path.join(out_dir, 'human_mosaic.jpg'))
         
         print("测试图片生成完毕!")
