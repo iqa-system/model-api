@@ -5,7 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/out" />
       <excludeFolder url="file://$MODULE_DIR$/weights" />
     </content>
-    <orderEntry type="jdk" jdkName="SaTQA" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="model-api" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>
