@@ -1,17 +1,67 @@
 openapi: 3.1.0
 info:
-  title: LIQE API
-  version: "1.0"
+  title: IQA Model API
+  version: "2.0"
   description: |
-    LIQE 图像质量评估服务. 提供单图推理,批量推理,以及本地文件夹批处理导出.
+    图像质量评估模型服务。
+    支持模型发现、单图推理、多图批量推理，并允许调用方通过 model_id 选择模型。
 servers:
   - url: http://localhost:8000
     description: Local development server
 paths:
+  /health:
+    get:
+      summary: 健康检查
+      tags:
+        - system
+      responses:
+        "200":
+          description: 服务可用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  model_loaded:
+                    type: boolean
+                  default_model_id:
+                    type: string
+                    nullable: true
+                  loaded_models:
+                    type: array
+                    items:
+                      type: string
+  /models:
+    get:
+      summary: 获取可用模型列表
+      tags:
+        - models
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsResponse"
+              examples:
+                success:
+                  value:
+                    default_model_id: "liqe_default"
+                    models:
+                      - model_id: "liqe_default"
+                        display_name: "LIQE Default"
+                        description: "当前系统默认使用的 LIQE 权重。"
+                        capabilities:
+                          - "quality_score"
+                          - "scene"
+                          - "distortion"
+                          - "distortions"
+                        is_default: true
   /predict:
     post:
       summary: 单张图片推理
-      description: 上传单张图片并返回质量评分,场景与失真类型.
       tags:
         - inference
       requestBody:
@@ -26,6 +76,9 @@ paths:
                 file:
                   type: string
                   format: binary
+                model_id:
+                  type: string
+                  description: 可选模型 ID，未传时使用默认模型
             encoding:
               file:
                 contentType: image/*
@@ -38,32 +91,29 @@ paths:
                 $ref: "#/components/schemas/PredictResult"
               examples:
                 success:
-                  summary: 成功示例
                   value:
                     file_name: "toothless.jpg"
+                    model_id: "liqe_default"
                     quality_score: 54.321
+                    extra_outputs: {}
                     scene: 4
                     distortion: 3
                     distortions:
                       - index: 3
                         prob: 0.4213
-                      - index: 2
-                        prob: 0.1532
         "400":
-          description: 请求无效或图片读取失败
+          description: 请求无效、模型不存在或图片读取失败
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HTTPError"
               examples:
-                invalid_image:
-                  summary: 图片读取失败
+                invalid_model:
                   value:
-                    detail: "图片读取失败: toothless.jpg"
+                    detail: "未知模型: unknown-model。当前可用模型: liqe_default, liqe_mix, liqe_koniq"
   /predict/batch:
     post:
       summary: 多张图片批量推理
-      description: 上传多张图片并返回每张图片的推理结果.
       tags:
         - inference
       requestBody:
@@ -80,6 +130,9 @@ paths:
                   items:
                     type: string
                     format: binary
+                model_id:
+                  type: string
+                  description: 可选模型 ID，未传时使用默认模型
             encoding:
               files:
                 contentType: image/*
@@ -92,93 +145,32 @@ paths:
                 $ref: "#/components/schemas/BatchPredictResponse"
               examples:
                 success:
-                  summary: 成功示例
                   value:
                     results:
                       - file_name: "a.jpg"
+                        model_id: "liqe_mix"
                         quality_score: 61.0
+                        extra_outputs: {}
                         scene: 3
                         distortion: 2
                         distortions:
                           - index: 2
                             prob: 0.6124
-                          - index: 5
-                            prob: 0.1701
                       - file_name: "b.jpg"
+                        model_id: "liqe_mix"
                         quality_score: 47.8
+                        extra_outputs: {}
                         scene: 4
                         distortion: 3
                         distortions:
                           - index: 3
-                            prob: 0.5120
+                            prob: 0.512
         "400":
-          description: 请求无效或图片读取失败
+          description: 请求无效、模型不存在或图片读取失败
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HTTPError"
-              examples:
-                empty_files:
-                  summary: 未提供图片文件列表
-                  value:
-                    detail: "未提供图片文件列表"
-  /process/folder:
-    post:
-      summary: 本地文件夹批处理
-      description: |
-        传入本地文件夹路径与输出文件路径,服务端批量处理并写出 CSV 或 Excel.
-      tags:
-        - batch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProcessFolderRequest"
-            examples:
-              default:
-                summary: 示例
-                value:
-                  input_path: "D:/data/images"
-                  output_path: "D:/data/output/result.csv"
-      responses:
-        "200":
-          description: 处理完成
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessFolderResult"
-              examples:
-                success:
-                  summary: 成功示例
-                  value:
-                    input_path: "D:/data/images"
-                    output_path: "D:/data/output/result.csv"
-                    total_images: 120
-                    processed_images: 118
-                    skipped_images: 2
-        "400":
-          description: 文件夹为空或没有可用结果
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-              examples:
-                no_images:
-                  summary: 文件夹无图片
-                  value:
-                    detail: "文件夹中未找到图片"
-        "404":
-          description: 输入文件夹不存在
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HTTPError"
-              examples:
-                not_found:
-                  summary: 路径不存在
-                  value:
-                    detail: "输入文件夹不存在: D:/data/images"
 components:
   schemas:
     DistortionProb:
@@ -192,32 +184,39 @@ components:
           description: 失真类型编码
         prob:
           type: number
-          description: 失真概率(四舍五入到4位小数)
+          description: 失真概率
     PredictResult:
       type: object
       required:
+        - model_id
         - quality_score
-        - scene
-        - distortion
-        - distortions
+        - extra_outputs
       properties:
         file_name:
           type: string
           nullable: true
-          description: 原始文件名
+        model_id:
+          type: string
+          description: 实际执行推理的模型 ID
         quality_score:
           type: number
           format: float
-          description: 质量评分
+        extra_outputs:
+          type: object
+          additionalProperties: true
+          description: 模型的通用扩展输出
         scene:
           type: integer
-          description: 场景类别编码
+          nullable: true
+          description: 场景类别编码，仅支持该能力的模型返回
         distortion:
           type: integer
-          description: 兼容字段,等于 distortions[0].index
+          nullable: true
+          description: 兼容字段，仅支持该能力的模型返回
         distortions:
           type: array
-          description: 概率>=0.10的失真列表,为空时返回top1
+          nullable: true
+          description: 失真概率列表，仅支持该能力的模型返回
           items:
             $ref: "#/components/schemas/DistortionProb"
     BatchPredictResponse:
@@ -229,40 +228,39 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PredictResult"
-    ProcessFolderRequest:
+    ModelInfo:
       type: object
       required:
-        - input_path
-        - output_path
+        - model_id
+        - display_name
+        - description
+        - capabilities
+        - is_default
       properties:
-        input_path:
+        model_id:
           type: string
-          description: 本地图片文件夹路径
-        output_path:
+        display_name:
           type: string
-          description: 输出 CSV 或 Excel 的路径
-    ProcessFolderResult:
+        description:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        is_default:
+          type: boolean
+    ModelsResponse:
       type: object
       required:
-        - input_path
-        - output_path
-        - total_images
-        - processed_images
-        - skipped_images
+        - default_model_id
+        - models
       properties:
-        input_path:
+        default_model_id:
           type: string
-        output_path:
-          type: string
-        total_images:
-          type: integer
-          description: 输入文件夹的图片总数
-        processed_images:
-          type: integer
-          description: 成功处理的图片数
-        skipped_images:
-          type: integer
-          description: 失败或跳过的图片数
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelInfo"
     HTTPError:
       type: object
       required:
@@ -270,5 +268,3 @@ components:
       properties:
         detail:
           type: string
-          description: 错误信息
-

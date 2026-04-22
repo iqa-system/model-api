@@ -1,0 +1,13 @@
+{
+  "default_model_id": "liqe_default",
+  "models": [
+    {
+      "id": "liqe_default",
+      "display_name": "LIQE Default",
+      "description": "当前系统默认使用的 LIQE 权重。",
+      "adapter": "liqe",
+      "weights_path": "weights/LIQE.pt",
+      "enabled": true
+    }
+  ]
+}

@@ -6,4 +6,9 @@ torchvision
 pillow
 pandas
 numpy
+openpyxl
+tqdm
+pytest
+httpx
+git+https://github.com/openai/CLIP.git
 

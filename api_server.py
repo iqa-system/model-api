@@ -1,224 +1,263 @@
-import os
-import json
-from io import BytesIO
-from typing import List
+from __future__ import annotations
+
+# 这个文件是 FastAPI 服务入口.
+# 主要职责有 3 件事:
+# 1. 在服务启动时读取模型注册表, 并预加载所有启用模型.
+# 2. 定义对外 HTTP 接口, 比如 /models, /predict, /predict/batch.
+# 3. 把内部模型推理结果整理成稳定的 API 响应结构.
+
 from contextlib import asynccontextmanager
+from io import BytesIO
+from pathlib import Path
+from typing import Any
 
 import torch
-import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from PIL import Image, ImageFile
-from torchvision.transforms import ToTensor
+from pydantic import BaseModel, Field
 
-from utils.LIQE import LIQE
+from model_registry import ModelRegistry
 
-ImageFile.LOAD_TRUNCATED_IMAGES = True  # 允许读取被截断的图片
 
-VALID_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff")  # 批量处理允许的扩展名
+# BASE_DIR 指向当前文件所在目录.
+# 这样无论服务从哪里启动, 都能稳定找到 config/model_registry.json.
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_MODEL_REGISTRY_PATH = BASE_DIR / "config" / "model_registry.json"
+
+# 允许 Pillow 读取部分被截断的图片.
+# 这对线上服务比较有用, 因为用户上传的图片不一定总是完全规范.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class DistortionProb(BaseModel):
-    # 失真类型概率项
+    # 这个 Pydantic 模型描述单个失真候选项.
+    # index 是失真类别编码.
+    # prob 是该失真类别对应的概率.
     index: int
     prob: float
 
 
 class PredictResult(BaseModel):
-    # 单张图片推理的响应结构
+    # 这是单张图片推理接口的统一响应结构.
+    # 不同模型至少要返回 model_id 和 quality_score.
+    # scene, distortion, distortions 是 LIQE 这类模型的附加能力, 所以允许为空.
+    # extra_outputs 预留给未来其它模型使用, 比如热力图分数, 置信度向量等.
     file_name: str | None = None
+    model_id: str
     quality_score: float
-    scene: int
-    distortion: int
-    distortions: List[DistortionProb]
+    extra_outputs: dict[str, Any] = Field(default_factory=dict)
+    scene: int | None = None
+    distortion: int | None = None
+    distortions: list[DistortionProb] | None = None
 
 
 class BatchPredictResponse(BaseModel):
-    # 批量推理的响应结构
-    results: List[PredictResult]
+    # 批量推理接口的响应很简单, 就是多个单图结果的列表.
+    results: list[PredictResult]
 
 
-class ProcessFolderRequest(BaseModel):
-    # 批处理请求体
-    input_path: str
-    output_path: str
+class ModelInfo(BaseModel):
+    # /models 接口会返回这个结构, 供 SpringBoot 或前端生成模型下拉框.
+    model_id: str
+    display_name: str
+    description: str
+    capabilities: list[str]
+    is_default: bool
 
 
-class ProcessFolderResult(BaseModel):
-    # 批处理结果摘要
-    input_path: str
-    output_path: str
-    total_images: int
-    processed_images: int
-    skipped_images: int
+class ModelsResponse(BaseModel):
+    # /models 的顶层返回结构.
+    # default_model_id 用来告诉调用方 "不传 model_id 时会走哪个模型".
+    default_model_id: str
+    models: list[ModelInfo]
 
 
 def _set_deterministic(seed: int = 20200626) -> None:
-    # 固定随机性,方便复现
+    # 固定随机种子, 让同一张图在相同环境下更容易得到可复现结果.
+    # 这在排查 "为什么这次和上次结果不一样" 时很有帮助.
     torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
 def _get_device() -> torch.device:
-    # 自动选择 GPU 或 CPU
+    # 优先使用 GPU, 没有 GPU 时退回 CPU.
+    # torch.device 是 PyTorch 用来表示运行设备的对象.
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def create_model(ckpt_path: str, device: torch.device) -> LIQE:
-    # 初始化模型并切到 eval 模式
-    model = LIQE(ckpt_path, device)
-    model.eval()
-    return model
+async def _read_upload_image(file: UploadFile) -> Image.Image:
+    # FastAPI 的 UploadFile 是异步文件对象.
+    # 这里把上传内容读入内存, 然后交给 Pillow 解码.
+    # convert("RGB") 的目的是统一颜色通道格式, 避免后续模型处理时出现模式差异.
+    try:
+        content = await file.read()
+        return Image.open(BytesIO(content)).convert("RGB")
+    except Exception as exc:  # noqa: BLE001
+        # 这里统一把各种底层图片解码错误包装成 400.
+        # 对调用方来说, 只需要知道图片不可读即可, 不需要看到过于底层的异常细节.
+        raise HTTPException(status_code=400, detail=f"图片读取失败: {file.filename}") from exc
 
 
-def _predict_image(model: LIQE, device: torch.device, img: Image.Image) -> PredictResult:
-    # 输入必须是 RGB 格式,调用方需保证
-    # ToTensor 会将 PIL.Image 转为 [0,1] 的 float Tensor
-    img_tensor = ToTensor()(img).unsqueeze(0).to(device)
-    with torch.no_grad():
-        # 模型输出: 质量分数,场景编码,兼容失真编码,失真概率列表
-        q, s, d, ds = model(img_tensor)
-    distortion_items = [DistortionProb(index=item["index"], prob=item["prob"]) for item in ds[0]]
+def _get_registry(request: Request) -> ModelRegistry:
+    # FastAPI 的 app.state 可以存放整个应用生命周期共享的数据.
+    # 我们把模型注册表放进去, 这样每个请求都能复用已加载好的模型实例.
+    registry = getattr(request.app.state, "model_registry", None)
+    if registry is None:
+        # 正常情况下不会走到这里.
+        # 如果出现了, 一般说明服务启动流程没有正确完成.
+        raise RuntimeError("模型注册表尚未初始化")
+    return registry
+
+
+def _build_predict_result(
+    file_name: str | None,
+    model_id: str,
+    prediction,
+) -> PredictResult:
+    # adapter 返回的是内部通用结构 ModelPrediction.
+    # 这里负责把内部结构转换成对外 API 响应结构 PredictResult.
+    # 这样可以把 "内部实现" 和 "对外协议" 分开管理.
+    distortion_items = None
+    if prediction.distortions is not None:
+        # 内部失真列表是普通字典列表.
+        # 这里转成 DistortionProb, 方便 FastAPI 自动生成更清晰的 OpenAPI 文档.
+        distortion_items = [
+            DistortionProb(index=item["index"], prob=item["prob"])
+            for item in prediction.distortions
+        ]
+
     return PredictResult(
-        quality_score=float(q.item()),
-        scene=int(s.item()),
-        distortion=distortion_items[0].index,
+        file_name=file_name,
+        model_id=model_id,
+        quality_score=prediction.quality_score,
+        extra_outputs=dict(prediction.extra_outputs),
+        scene=prediction.scene,
+        distortion=prediction.distortion,
         distortions=distortion_items,
     )
 
 
-async def _read_upload_image(file: UploadFile) -> Image.Image:
-    try:
-        # 读取上传文件内容,避免磁盘落地
-        content = await file.read()
-        img = Image.open(BytesIO(content)).convert("RGB")
-        return img
-    except Exception as exc:  # noqa: BLE001
-        # 上传文件损坏或格式异常
-        raise HTTPException(status_code=400, detail=f"图片读取失败: {file.filename}") from exc
+def _create_lifespan(model_registry_path: Path):
+    # FastAPI 的 lifespan 是应用启动和关闭时运行的钩子.
+    # 我们用它来做 "服务启动时一次性加载所有模型" 这件事.
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        print("服务启动中: 加载模型注册表...")
+        # 先固定随机性, 再选择设备, 最后加载注册表.
+        # 这个顺序比较自然, 也方便排查启动问题.
+        _set_deterministic()
+        device = _get_device()
+        registry = ModelRegistry.from_path(model_registry_path, device)
+        # 把设备和注册表挂到 app.state 上.
+        # 后续每个请求都从这里取, 而不是重复创建模型对象.
+        app.state.device = device
+        app.state.model_registry = registry
+        print(
+            f"已加载 {len(registry.adapters)} 个模型, "
+            f"默认模型: {registry.default_model_id}, "
+            f"设备: {device}"
+        )
+        yield
+
+    return lifespan
 
 
-def _save_results(results: List[dict], output_path: str) -> None:
-    # 输出路径不存在时自动创建
-    out_dir = os.path.dirname(output_path)
-    if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    # 统一用 DataFrame 便于写出多种格式
-    df = pd.DataFrame(results)
-    if output_path.lower().endswith(".csv"):
-        df.to_csv(output_path, index=False, encoding="utf-8-sig")
-    else:
-        df.to_excel(output_path, index=False)
+def create_app(model_registry_path: Path | None = None) -> FastAPI:
+    # create_app 的好处是既能给线上运行用, 也方便测试时传入临时配置文件.
+    registry_path = Path(model_registry_path or DEFAULT_MODEL_REGISTRY_PATH).resolve()
+    app = FastAPI(title="IQA Model API", version="2.0", lifespan=_create_lifespan(registry_path))
 
+    @app.get("/health")
+    def health_check(request: Request) -> dict[str, Any]:
+        # 健康检查通常给运维系统, 反向代理, 或上层服务使用.
+        # 除了告诉调用方服务活着, 也顺便返回当前加载了哪些模型.
+        registry = getattr(request.app.state, "model_registry", None)
+        loaded_models = registry.model_order if registry else []
+        return {
+            "status": "ok",
+            "model_loaded": bool(loaded_models),
+            "default_model_id": registry.default_model_id if registry else None,
+            "loaded_models": loaded_models,
+        }
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("服务启动中: 加载模型权重...")
-    # 仅在服务启动时加载模型,避免重复开销
-    _set_deterministic()
-    ckpt_path = os.getenv("LIQE_WEIGHTS", "weights/LIQE.pt")
-    if not os.path.exists(ckpt_path):
-        # 启动阶段抛错可快速暴露缺失权重问题
-        raise RuntimeError(f"模型权重不存在: {ckpt_path}")
-    print(f"已加载模型权重: {ckpt_path}")
-    device = _get_device()
-    model = create_model(ckpt_path, device)
-    # 通过 app.state 缓存模型与设备,供请求复用
-    app.state.device = device
-    app.state.model = model
-    app.state.ckpt_path = ckpt_path
-    yield
+    @app.get("/models", response_model=ModelsResponse)
+    def list_models(request: Request) -> ModelsResponse:
+        # 这个接口专门给外部系统发现模型用.
+        # 前端可以据此渲染模型下拉框.
+        # SpringBoot 也可以据此决定是否做一层转发或缓存.
+        registry = _get_registry(request)
+        return ModelsResponse(
+            default_model_id=registry.default_model_id,
+            models=[ModelInfo(**descriptor.__dict__) for descriptor in registry.list_models()],
+        )
 
+    @app.post("/predict", response_model=PredictResult)
+    async def predict(
+        request: Request,
+        file: UploadFile = File(...),
+        model_id: str | None = Form(None),
+    ) -> PredictResult:
+        # 单图推理的流程是:
+        # 1. 校验上传文件.
+        # 2. 从 app.state 中拿到注册表.
+        # 3. 读取图片.
+        # 4. 根据 model_id 选择模型并推理.
+        # 5. 统一封装响应.
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="未提供图片文件")
 
-app = FastAPI(title="LIQE API", version="1.0", lifespan=lifespan)  # FastAPI 应用实例
-
-@app.get("/health")
-def health_check() -> dict:
-    # 健康检查接口,可用于负载均衡器或监控系统
-    return {"status": "ok", "model_loaded": bool(app.state.model)}
-
-
-@app.post("/predict", response_model=PredictResult)
-async def predict(file: UploadFile = File(...)) -> PredictResult:
-    # 单图推理
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="未提供图片文件")
-    img = await _read_upload_image(file)
-    result = _predict_image(app.state.model, app.state.device, img)
-    result.file_name = file.filename
-    return result
-
-
-@app.post("/predict/batch", response_model=BatchPredictResponse)
-async def predict_batch(files: List[UploadFile] = File(...)) -> BatchPredictResponse:
-    # 多图推理
-    if not files:
-        raise HTTPException(status_code=400, detail="未提供图片文件列表")
-    results: List[PredictResult] = []
-    for file in files:
-        # 每张图片单独解析与推理,避免相互影响
+        registry = _get_registry(request)
         img = await _read_upload_image(file)
-        result = _predict_image(app.state.model, app.state.device, img)
-        result.file_name = file.filename
-        results.append(result)
-    return BatchPredictResponse(results=results)
-
-
-@app.post("/process/folder", response_model=ProcessFolderResult)
-def process_folder(payload: ProcessFolderRequest) -> ProcessFolderResult:
-    # 复用原有的批量处理逻辑
-    input_path = payload.input_path
-    output_path = payload.output_path
-    if not os.path.exists(input_path):
-        raise HTTPException(status_code=404, detail=f"输入文件夹不存在: {input_path}")
-
-    image_files = [
-        f for f in os.listdir(input_path) if f.lower().endswith(VALID_EXTENSIONS)
-    ]
-    if not image_files:
-        raise HTTPException(status_code=400, detail="文件夹中未找到图片")
-
-    results: List[dict] = []
-    skipped = 0
-    for filename in image_files:
         try:
-            img_path = os.path.join(input_path, filename)
-            img = Image.open(img_path).convert("RGB")
-            pred = _predict_image(app.state.model, app.state.device, img)
-            # 结果字典方便写出 CSV 或 Excel
-            results.append(
-                {
-                    "image_name": filename,
-                    "quality_score": pred.quality_score,
-                    "scene": pred.scene,
-                    "distortion": pred.distortion,
-                    "distortions": json.dumps(
-                        [{"index": item.index, "prob": item.prob} for item in pred.distortions],
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ),
-                }
-            )
-        except Exception:  # noqa: BLE001
-            # 读取或推理失败的图片计入跳过
-            skipped += 1
+            # registry.predict 会自动处理两种情况:
+            # 1. model_id 为 None 时, 使用默认模型.
+            # 2. model_id 有值时, 校验该模型是否存在并已启用.
+            resolved_model_id, prediction = registry.predict(model_id, img)
+        except ValueError as exc:
+            # 这里的 ValueError 一般代表调用方传了未知模型 ID.
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if not results:
-        raise HTTPException(status_code=400, detail="没有可用的图片结果")
+        return _build_predict_result(file.filename, resolved_model_id, prediction)
 
-    _save_results(results, output_path)
-    return ProcessFolderResult(
-        input_path=input_path,
-        output_path=output_path,
-        total_images=len(image_files),
-        processed_images=len(results),
-        skipped_images=skipped,
-    )
+    @app.post("/predict/batch", response_model=BatchPredictResponse)
+    async def predict_batch(
+        request: Request,
+        files: list[UploadFile] = File(...),
+        model_id: str | None = Form(None),
+    ) -> BatchPredictResponse:
+        # 批量推理和单图推理思路一致.
+        # 差别是这里先把 model_id 解析一次, 然后循环处理每一张图.
+        # 这样可以避免在循环里重复做同一套模型选择校验.
+        if not files:
+            raise HTTPException(status_code=400, detail="未提供图片文件列表")
+
+        registry = _get_registry(request)
+        results: list[PredictResult] = []
+        try:
+            resolved_model_id = registry.resolve_model_id(model_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        for file in files:
+            # 每张图片都单独读取和推理.
+            # 这样即使以后要做更细粒度的错误处理, 这里也比较容易扩展.
+            img = await _read_upload_image(file)
+            _, prediction = registry.predict(resolved_model_id, img)
+            results.append(_build_predict_result(file.filename, resolved_model_id, prediction))
+
+        return BatchPredictResponse(results=results)
+
+    return app
+
+
+app = create_app()
+# 上面这行会在 import api_server 时直接创建 FastAPI 应用对象.
+# Uvicorn 在启动时会读取这个 app 变量.
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    # 直接运行文件时启动服务
+    # 直接运行 python api_server.py 时, 会启动本地开发服务.
     uvicorn.run("api_server:app", host="localhost", port=8000, reload=False)
