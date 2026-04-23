@@ -33,8 +33,8 @@ class DistortionProb(BaseModel):
     # 这个 Pydantic 模型描述单个失真候选项.
     # index 是失真类别编码.
     # prob 是该失真类别对应的概率.
-    index: int
-    prob: float
+    index: int = Field(description="失真类型编码")
+    prob: float = Field(description="该失真类型对应的概率")
 
 
 class PredictResult(BaseModel):
@@ -42,34 +42,43 @@ class PredictResult(BaseModel):
     # 不同模型至少要返回 model_id 和 quality_score.
     # scene, distortion, distortions 是 LIQE 这类模型的附加能力, 所以允许为空.
     # extra_outputs 预留给未来其它模型使用, 比如热力图分数, 置信度向量等.
-    file_name: str | None = None
-    model_id: str
-    quality_score: float
-    extra_outputs: dict[str, Any] = Field(default_factory=dict)
-    scene: int | None = None
-    distortion: int | None = None
-    distortions: list[DistortionProb] | None = None
+    file_name: str | None = Field(default=None, description="上传文件名. 批量接口中通常会返回")
+    model_id: str = Field(description="实际执行推理的模型 ID")
+    quality_score: float = Field(description="模型输出的质量分数")
+    extra_outputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="模型的通用扩展输出. 当前 pyiqa 模型通常为空对象",
+    )
+    scene: int | None = Field(default=None, description="场景类别编码. 仅 LIQE 等支持该能力的模型返回")
+    distortion: int | None = Field(
+        default=None,
+        description="主失真类别编码. 仅 LIQE 等支持该能力的模型返回",
+    )
+    distortions: list[DistortionProb] | None = Field(
+        default=None,
+        description="失真概率列表. 仅 LIQE 等支持该能力的模型返回",
+    )
 
 
 class BatchPredictResponse(BaseModel):
     # 批量推理接口的响应很简单, 就是多个单图结果的列表.
-    results: list[PredictResult]
+    results: list[PredictResult] = Field(description="批量推理结果列表")
 
 
 class ModelInfo(BaseModel):
     # /models 接口会返回这个结构, 供 SpringBoot 或前端生成模型下拉框.
-    model_id: str
-    display_name: str
-    description: str
-    capabilities: list[str]
-    is_default: bool
+    model_id: str = Field(description="模型唯一 ID. 调用 /predict 时通过 model_id 选择模型")
+    display_name: str = Field(description="用于前端展示的模型名称")
+    description: str = Field(description="模型特点说明, 包括适用场景, 优势或性能概述")
+    capabilities: list[str] = Field(description="当前模型可返回的能力字段列表")
+    is_default: bool = Field(description="该模型是否为默认模型")
 
 
 class ModelsResponse(BaseModel):
     # /models 的顶层返回结构.
     # default_model_id 用来告诉调用方 "不传 model_id 时会走哪个模型".
-    default_model_id: str
-    models: list[ModelInfo]
+    default_model_id: str = Field(description="默认模型 ID. 当 /predict 未传 model_id 时会使用它")
+    models: list[ModelInfo] = Field(description="当前已启用的模型列表")
 
 
 def _set_deterministic(seed: int = 20200626) -> None:
@@ -168,7 +177,12 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
     registry_path = Path(model_registry_path or DEFAULT_MODEL_REGISTRY_PATH).resolve()
     app = FastAPI(title="IQA Model API", version="2.0", lifespan=_create_lifespan(registry_path))
 
-    @app.get("/health")
+    @app.get(
+        "/health",
+        tags=["system"],
+        summary="健康检查",
+        description="返回服务状态, 默认模型 ID, 以及当前已成功加载的模型列表.",
+    )
     def health_check(request: Request) -> dict[str, Any]:
         # 健康检查通常给运维系统, 反向代理, 或上层服务使用.
         # 除了告诉调用方服务活着, 也顺便返回当前加载了哪些模型.
@@ -181,7 +195,16 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
             "loaded_models": loaded_models,
         }
 
-    @app.get("/models", response_model=ModelsResponse)
+    @app.get(
+        "/models",
+        response_model=ModelsResponse,
+        tags=["models"],
+        summary="获取可用模型列表",
+        description=(
+            "返回当前所有启用模型的 ID, 展示名, 特点说明和能力字段. "
+            "前端可以用这个接口渲染模型下拉框, 也可以据此决定是否展示 scene 或 distortion."
+        ),
+    )
     def list_models(request: Request) -> ModelsResponse:
         # 这个接口专门给外部系统发现模型用.
         # 前端可以据此渲染模型下拉框.
@@ -192,11 +215,23 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
             models=[ModelInfo(**descriptor.__dict__) for descriptor in registry.list_models()],
         )
 
-    @app.post("/predict", response_model=PredictResult)
+    @app.post(
+        "/predict",
+        response_model=PredictResult,
+        tags=["inference"],
+        summary="单张图片推理",
+        description=(
+            "上传一张图片并返回质量评估结果. "
+            "如果未传 model_id, 服务会自动使用 /models 返回的 default_model_id."
+        ),
+    )
     async def predict(
         request: Request,
-        file: UploadFile = File(...),
-        model_id: str | None = Form(None),
+        file: UploadFile = File(..., description="待评估图片文件"),
+        model_id: str | None = Form(
+            None,
+            description="可选模型 ID. 当前可用值可通过 /models 查询, 未传时使用默认模型",
+        ),
     ) -> PredictResult:
         # 单图推理的流程是:
         # 1. 校验上传文件.
@@ -220,11 +255,23 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
 
         return _build_predict_result(file.filename, resolved_model_id, prediction)
 
-    @app.post("/predict/batch", response_model=BatchPredictResponse)
+    @app.post(
+        "/predict/batch",
+        response_model=BatchPredictResponse,
+        tags=["inference"],
+        summary="多张图片批量推理",
+        description=(
+            "一次上传多张图片并使用同一个模型批量评估. "
+            "如果未传 model_id, 服务会自动使用默认模型."
+        ),
+    )
     async def predict_batch(
         request: Request,
-        files: list[UploadFile] = File(...),
-        model_id: str | None = Form(None),
+        files: list[UploadFile] = File(..., description="待批量评估的图片文件列表"),
+        model_id: str | None = Form(
+            None,
+            description="可选模型 ID. 当前可用值可通过 /models 查询, 未传时使用默认模型",
+        ),
     ) -> BatchPredictResponse:
         # 批量推理和单图推理思路一致.
         # 差别是这里先把 model_id 解析一次, 然后循环处理每一张图.

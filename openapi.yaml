@@ -5,6 +5,8 @@ info:
   description: |
     图像质量评估模型服务。
     支持模型发现、单图推理、多图批量推理，并允许调用方通过 model_id 选择模型。
+    当前默认接入 LIQE, MUSIQ, TOPIQ-NR 3 类模型。
+    其中 LIQE 还会返回 scene, distortion 和 distortions 等扩展字段。
 servers:
   - url: http://localhost:8000
     description: Local development server
@@ -36,6 +38,9 @@ paths:
   /models:
     get:
       summary: 获取可用模型列表
+      description: |
+        返回当前所有启用模型的 ID, 展示名, 特点说明和能力字段。
+        前端可以据此渲染模型下拉框, 并决定是否展示 scene 或 distortion 等附加字段。
       tags:
         - models
       responses:
@@ -52,16 +57,31 @@ paths:
                     models:
                       - model_id: "liqe_default"
                         display_name: "LIQE Default"
-                        description: "当前系统默认使用的 LIQE 权重。"
+                        description: "基于 vision-language multitask 的 NR-IQA 模型. 强项是可解释性和泛化能力, 当前服务还能额外输出 scene 与 distortion. 论文报告其在多个 IQA 数据集上优于当时 SOTA, 并且跨数据集对齐能力更强."
                         capabilities:
                           - "quality_score"
                           - "scene"
                           - "distortion"
                           - "distortions"
                         is_default: true
+                      - model_id: "musiq_koniq"
+                        display_name: "MUSIQ KonIQ-10k"
+                        description: "多尺度 Transformer 无参考图像质量模型. 能直接处理原生分辨率和不同长宽比图像, 对高分辨率细节和整体构图更友好. 论文在 PaQ-2-PiQ, SPAQ, KonIQ-10k 等大规模数据集上报告了 SOTA 表现."
+                        capabilities:
+                          - "quality_score"
+                        is_default: false
+                      - model_id: "topiq_nr_koniq"
+                        display_name: "TOPIQ-NR KonIQ"
+                        description: "语义引导的 coarse-to-fine 无参考图像质量模型. 强项是让高层语义信息引导局部失真关注, 在自然场景图像上通常兼顾精度与效率. 论文报告其在多数公开 FR 与 NR 基准上达到 better or competitive 表现, 且效率明显更高."
+                        capabilities:
+                          - "quality_score"
+                        is_default: false
   /predict:
     post:
       summary: 单张图片推理
+      description: |
+        上传一张图片并返回质量评估结果。
+        如果未传 model_id, 服务会自动使用 /models 返回的 default_model_id。
       tags:
         - inference
       requestBody:
@@ -76,9 +96,10 @@ paths:
                 file:
                   type: string
                   format: binary
+                  description: 待评估图片文件
                 model_id:
                   type: string
-                  description: 可选模型 ID，未传时使用默认模型
+                  description: 可选模型 ID. 当前可用值可通过 /models 查询, 未传时使用默认模型
             encoding:
               file:
                 contentType: image/*
@@ -90,7 +111,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PredictResult"
               examples:
-                success:
+                liqe_success:
                   value:
                     file_name: "toothless.jpg"
                     model_id: "liqe_default"
@@ -101,6 +122,15 @@ paths:
                     distortions:
                       - index: 3
                         prob: 0.4213
+                musiq_success:
+                  value:
+                    file_name: "human.jpg"
+                    model_id: "musiq_koniq"
+                    quality_score: 73.2469
+                    extra_outputs: {}
+                    scene: null
+                    distortion: null
+                    distortions: null
         "400":
           description: 请求无效、模型不存在或图片读取失败
           content:
@@ -110,10 +140,13 @@ paths:
               examples:
                 invalid_model:
                   value:
-                    detail: "未知模型: unknown-model。当前可用模型: liqe_default, liqe_mix, liqe_koniq"
+                    detail: "未知模型: unknown-model。当前可用模型: liqe_default, musiq_koniq, topiq_nr_koniq"
   /predict/batch:
     post:
       summary: 多张图片批量推理
+      description: |
+        一次上传多张图片并使用同一个模型批量评估。
+        如果未传 model_id, 服务会自动使用默认模型。
       tags:
         - inference
       requestBody:
@@ -130,9 +163,10 @@ paths:
                   items:
                     type: string
                     format: binary
+                  description: 待批量评估的图片文件列表
                 model_id:
                   type: string
-                  description: 可选模型 ID，未传时使用默认模型
+                  description: 可选模型 ID. 当前可用值可通过 /models 查询, 未传时使用默认模型
             encoding:
               files:
                 contentType: image/*
@@ -148,23 +182,19 @@ paths:
                   value:
                     results:
                       - file_name: "a.jpg"
-                        model_id: "liqe_mix"
-                        quality_score: 61.0
+                        model_id: "topiq_nr_koniq"
+                        quality_score: 0.8124
                         extra_outputs: {}
-                        scene: 3
-                        distortion: 2
-                        distortions:
-                          - index: 2
-                            prob: 0.6124
+                        scene: null
+                        distortion: null
+                        distortions: null
                       - file_name: "b.jpg"
-                        model_id: "liqe_mix"
-                        quality_score: 47.8
+                        model_id: "topiq_nr_koniq"
+                        quality_score: 0.7031
                         extra_outputs: {}
-                        scene: 4
-                        distortion: 3
-                        distortions:
-                          - index: 3
-                            prob: 0.512
+                        scene: null
+                        distortion: null
+                        distortions: null
         "400":
           description: 请求无效、模型不存在或图片读取失败
           content:
@@ -195,28 +225,30 @@ components:
         file_name:
           type: string
           nullable: true
+          description: 上传文件名. 批量接口中通常会返回
         model_id:
           type: string
           description: 实际执行推理的模型 ID
         quality_score:
           type: number
           format: float
+          description: 模型输出的质量分数
         extra_outputs:
           type: object
           additionalProperties: true
-          description: 模型的通用扩展输出
+          description: 模型的通用扩展输出. 当前 pyiqa 模型通常为空对象
         scene:
           type: integer
           nullable: true
-          description: 场景类别编码，仅支持该能力的模型返回
+          description: 场景类别编码. 仅 LIQE 等支持该能力的模型返回
         distortion:
           type: integer
           nullable: true
-          description: 兼容字段，仅支持该能力的模型返回
+          description: 主失真类别编码. 仅 LIQE 等支持该能力的模型返回
         distortions:
           type: array
           nullable: true
-          description: 失真概率列表，仅支持该能力的模型返回
+          description: 失真概率列表. 仅 LIQE 等支持该能力的模型返回
           items:
             $ref: "#/components/schemas/DistortionProb"
     BatchPredictResponse:
@@ -239,16 +271,21 @@ components:
       properties:
         model_id:
           type: string
+          description: 模型唯一 ID. 调用 /predict 时通过 model_id 选择模型
         display_name:
           type: string
+          description: 用于前端展示的模型名称
         description:
           type: string
+          description: 模型特点说明, 包括适用场景, 优势或性能概述
         capabilities:
           type: array
+          description: 当前模型可返回的能力字段列表
           items:
             type: string
         is_default:
           type: boolean
+          description: 该模型是否为默认模型
     ModelsResponse:
       type: object
       required:
@@ -257,8 +294,10 @@ components:
       properties:
         default_model_id:
           type: string
+          description: 默认模型 ID. 当 /predict 未传 model_id 时会使用它
         models:
           type: array
+          description: 当前已启用的模型列表
           items:
             $ref: "#/components/schemas/ModelInfo"
     HTTPError:

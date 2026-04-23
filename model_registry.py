@@ -19,6 +19,9 @@ from model_adapters import BaseIqaModelAdapter, ModelDescriptor, ModelPrediction
 # SERVICE_ROOT 指向服务代码根目录.
 # 解析相对权重路径时会优先参考这里.
 SERVICE_ROOT = Path(__file__).resolve().parent
+# WEIGHTS_ROOT 指向项目约定的本地权重目录.
+# 用户把额外模型权重统一放这里时, 配置文件可以只写文件名.
+WEIGHTS_ROOT = SERVICE_ROOT / "weights"
 
 
 class ModelConfig(BaseModel):
@@ -97,10 +100,13 @@ class ModelRegistry:
         model_order: list[str] = []
         for model in enabled_models:
             # 先解析权重路径.
-            # 这一步支持绝对路径, 服务根目录相对路径, 以及配置文件相对路径.
+            # 这一步支持绝对路径, 项目 weights 目录, 服务根目录相对路径, 以及配置文件相对路径.
             weights_path = _resolve_weights_path(resolved_config_path, model.weights_path)
             if not weights_path.exists():
-                raise RuntimeError(f"模型权重不存在: {weights_path}")
+                raise RuntimeError(
+                    f"模型权重不存在: {weights_path}. "
+                    f"请确认文件已经放到项目 weights 目录, 或者在配置里填写正确的绝对路径"
+                )
 
             # 再根据 adapter 名称创建对应 adapter.
             adapter = create_adapter(
@@ -160,12 +166,18 @@ class ModelRegistry:
 def _resolve_weights_path(config_path: Path, weights_path: str) -> Path:
     # 权重路径解析规则如下:
     # 1. 如果本身就是绝对路径, 直接使用.
-    # 2. 如果相对于服务根目录存在, 优先使用.
-    # 3. 否则按相对于配置文件所在目录解析.
+    # 2. 如果只是文件名, 优先到项目 weights 目录下查找.
+    # 3. 如果相对于服务根目录存在, 使用该路径.
+    # 4. 否则按相对于配置文件所在目录解析.
     # 这样兼顾了本地开发和部署环境两种使用方式.
     raw_path = Path(weights_path)
     if raw_path.is_absolute():
         return raw_path
+
+    if len(raw_path.parts) == 1:
+        weights_relative = (WEIGHTS_ROOT / raw_path).resolve()
+        if weights_relative.exists():
+            return weights_relative
 
     service_relative = (SERVICE_ROOT / raw_path).resolve()
     if service_relative.exists():
