@@ -1,5 +1,14 @@
 from itertools import product
 
+import warnings
+# 忽略 pkg_resources 的弃用警告
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
+
+
 import clip
 import torch
 import torch.nn as nn
