@@ -37,6 +37,13 @@ class DistortionProb(BaseModel):
     prob: float = Field(description="该失真类型对应的概率")
 
 
+class ScoreRange(BaseModel):
+    # 统一描述模型原始分数区间.
+    # 当前服务约定所有模型都满足 "分数越大越好", 因此这里只返回最小值和最大值.
+    min_score: float = Field(description="模型原始分数最小值")
+    max_score: float = Field(description="模型原始分数最大值")
+
+
 class PredictResult(BaseModel):
     # 这是单张图片推理接口的统一响应结构.
     # 不同模型至少要返回 model_id 和 quality_score.
@@ -45,6 +52,7 @@ class PredictResult(BaseModel):
     file_name: str | None = Field(default=None, description="上传文件名. 批量接口中通常会返回")
     model_id: str = Field(description="实际执行推理的模型 ID")
     quality_score: float = Field(description="模型输出的质量分数")
+    score_range: ScoreRange = Field(description="该模型原始分数的取值区间")
     extra_outputs: dict[str, Any] = Field(
         default_factory=dict,
         description="模型的通用扩展输出. 当前 pyiqa 模型通常为空对象",
@@ -71,6 +79,7 @@ class ModelInfo(BaseModel):
     display_name: str = Field(description="用于前端展示的模型名称")
     description: str = Field(description="模型特点说明, 包括适用场景, 优势或性能概述")
     capabilities: list[str] = Field(description="当前模型可返回的能力字段列表")
+    score_range: ScoreRange = Field(description="该模型原始分数的取值区间")
     is_default: bool = Field(description="该模型是否为默认模型")
 
 
@@ -123,6 +132,7 @@ def _build_predict_result(
     file_name: str | None,
     model_id: str,
     prediction,
+    score_range: ScoreRange,
 ) -> PredictResult:
     # adapter 返回的是内部通用结构 ModelPrediction.
     # 这里负责把内部结构转换成对外 API 响应结构 PredictResult.
@@ -140,10 +150,29 @@ def _build_predict_result(
         file_name=file_name,
         model_id=model_id,
         quality_score=prediction.quality_score,
+        score_range=score_range,
         extra_outputs=dict(prediction.extra_outputs),
         scene=prediction.scene,
         distortion=prediction.distortion,
         distortions=distortion_items,
+    )
+
+
+def _build_model_info(descriptor) -> ModelInfo:
+    # registry.list_models() 返回的是内部 dataclass ModelDescriptor.
+    # 其中的 score_range 也是内部 dataclass ScoreRange, 不能直接原样塞给
+    # API 层的 Pydantic ModelInfo, 否则 Pydantic 会把它当成“未知对象类型”并报校验错误.
+    # 这里显式做一层转换, 统一把内部描述对象映射成对外 API 契约对象.
+    return ModelInfo(
+        model_id=descriptor.model_id,
+        display_name=descriptor.display_name,
+        description=descriptor.description,
+        capabilities=list(descriptor.capabilities),
+        score_range=ScoreRange(
+            min_score=descriptor.score_range.min_score,
+            max_score=descriptor.score_range.max_score,
+        ),
+        is_default=descriptor.is_default,
     )
 
 
@@ -212,7 +241,7 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
         registry = _get_registry(request)
         return ModelsResponse(
             default_model_id=registry.default_model_id,
-            models=[ModelInfo(**descriptor.__dict__) for descriptor in registry.list_models()],
+            models=[_build_model_info(descriptor) for descriptor in registry.list_models()],
         )
 
     @app.post(
@@ -253,7 +282,12 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
             # 这里的 ValueError 一般代表调用方传了未知模型 ID.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        return _build_predict_result(file.filename, resolved_model_id, prediction)
+        return _build_predict_result(
+            file.filename,
+            resolved_model_id,
+            prediction,
+            ScoreRange(**registry.get_adapter(resolved_model_id).score_range.__dict__),
+        )
 
     @app.post(
         "/predict/batch",
@@ -291,7 +325,14 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
             # 这样即使以后要做更细粒度的错误处理, 这里也比较容易扩展.
             img = await _read_upload_image(file)
             _, prediction = registry.predict(resolved_model_id, img)
-            results.append(_build_predict_result(file.filename, resolved_model_id, prediction))
+            results.append(
+                _build_predict_result(
+                    file.filename,
+                    resolved_model_id,
+                    prediction,
+                    ScoreRange(**registry.get_adapter(resolved_model_id).score_range.__dict__),
+                )
+            )
 
         return BatchPredictResponse(results=results)
 

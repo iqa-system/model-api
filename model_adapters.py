@@ -14,6 +14,14 @@ import torch
 from PIL import Image
 
 
+@dataclass(frozen=True)
+class ScoreRange:
+    # 统一描述模型原始分数的取值范围.
+    # 当前约定所有模型都满足 "分数越大越好", 因此这里只描述区间, 不增加方向字段.
+    min_score: float
+    max_score: float
+
+
 @dataclass
 class ModelPrediction:
     # 这是模型内部统一输出结构.
@@ -33,6 +41,7 @@ class ModelDescriptor:
     display_name: str
     description: str
     capabilities: list[str]
+    score_range: ScoreRange
     is_default: bool
 
 
@@ -48,6 +57,7 @@ class BaseIqaModelAdapter(ABC):
         display_name: str,
         description: str,
         weights_path: Path,
+        score_range: ScoreRange,
         adapter_options: dict[str, Any] | None = None,
     ) -> None:
         # 这些字段都是所有模型都需要的基础元数据.
@@ -56,6 +66,7 @@ class BaseIqaModelAdapter(ABC):
         self.display_name = display_name
         self.description = description
         self.weights_path = weights_path
+        self.score_range = score_range
         self.adapter_options = adapter_options or {}
 
     @property
@@ -71,6 +82,7 @@ class BaseIqaModelAdapter(ABC):
             display_name=self.display_name,
             description=self.description,
             capabilities=self.capabilities,
+            score_range=self.score_range,
             is_default=is_default,
         )
 
@@ -104,9 +116,10 @@ class LiqeAdapter(BaseIqaModelAdapter):
         display_name: str,
         description: str,
         weights_path: Path,
+        score_range: ScoreRange,
         adapter_options: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(model_id, display_name, description, weights_path, adapter_options)
+        super().__init__(model_id, display_name, description, weights_path, score_range, adapter_options)
         # device 和 model 会在 load 时真正赋值.
         # 这样创建 adapter 对象本身不会立刻触发模型加载.
         self.device: torch.device | None = None
@@ -167,9 +180,10 @@ class PyiqaMetricAdapter(BaseIqaModelAdapter):
         display_name: str,
         description: str,
         weights_path: Path,
+        score_range: ScoreRange,
         adapter_options: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(model_id, display_name, description, weights_path, adapter_options)
+        super().__init__(model_id, display_name, description, weights_path, score_range, adapter_options)
         self.device: torch.device | None = None
         self.model = None
 
@@ -283,6 +297,7 @@ def create_adapter(
     display_name: str,
     description: str,
     weights_path: Path,
+    score_range: ScoreRange,
     adapter_options: dict[str, Any] | None = None,
 ) -> BaseIqaModelAdapter:
     # 根据配置文件里的 adapter_name 动态创建具体 adapter.
@@ -299,5 +314,6 @@ def create_adapter(
         display_name=display_name,
         description=description,
         weights_path=weights_path,
+        score_range=score_range,
         adapter_options=adapter_options,
     )

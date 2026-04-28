@@ -13,7 +13,14 @@ from typing import Any
 import torch
 from pydantic import BaseModel, Field
 
-from model_adapters import BaseIqaModelAdapter, ModelDescriptor, ModelPrediction, create_adapter
+from model_adapters import BaseIqaModelAdapter, ModelDescriptor, ModelPrediction, ScoreRange, create_adapter
+
+
+class ScoreRangeConfig(BaseModel):
+    # 单个模型评分范围配置.
+    # min_score 和 max_score 必须能唯一确定一个有效区间.
+    min_score: float
+    max_score: float
 
 
 # SERVICE_ROOT 指向服务代码根目录.
@@ -32,6 +39,7 @@ class ModelConfig(BaseModel):
     description: str
     adapter: str
     weights_path: str
+    score_range: ScoreRangeConfig
     enabled: bool = True
     adapter_options: dict[str, Any] = Field(default_factory=dict)
 
@@ -99,6 +107,11 @@ class ModelRegistry:
         adapters: dict[str, BaseIqaModelAdapter] = {}
         model_order: list[str] = []
         for model in enabled_models:
+            if model.score_range.max_score <= model.score_range.min_score:
+                raise RuntimeError(
+                    f"模型评分范围非法: {model.id}. max_score 必须大于 min_score"
+                )
+
             # 先解析权重路径.
             # 这一步支持绝对路径, 项目 weights 目录, 服务根目录相对路径, 以及配置文件相对路径.
             weights_path = _resolve_weights_path(resolved_config_path, model.weights_path)
@@ -115,6 +128,10 @@ class ModelRegistry:
                 display_name=model.display_name,
                 description=model.description,
                 weights_path=weights_path,
+                score_range=ScoreRange(
+                    min_score=float(model.score_range.min_score),
+                    max_score=float(model.score_range.max_score),
+                ),
                 adapter_options=model.adapter_options,
             )
             try:

@@ -63,18 +63,27 @@ paths:
                           - "scene"
                           - "distortion"
                           - "distortions"
+                        score_range:
+                          min_score: 0
+                          max_score: 100
                         is_default: true
                       - model_id: "musiq_koniq"
                         display_name: "MUSIQ KonIQ-10k"
                         description: "多尺度 Transformer 无参考图像质量模型. 能直接处理原生分辨率和不同长宽比图像, 对高分辨率细节和整体构图更友好. 论文在 PaQ-2-PiQ, SPAQ, KonIQ-10k 等大规模数据集上报告了 SOTA 表现."
                         capabilities:
                           - "quality_score"
+                        score_range:
+                          min_score: 0
+                          max_score: 100
                         is_default: false
                       - model_id: "topiq_nr_koniq"
                         display_name: "TOPIQ-NR KonIQ"
                         description: "语义引导的 coarse-to-fine 无参考图像质量模型. 强项是让高层语义信息引导局部失真关注, 在自然场景图像上通常兼顾精度与效率. 论文报告其在多数公开 FR 与 NR 基准上达到 better or competitive 表现, 且效率明显更高."
                         capabilities:
                           - "quality_score"
+                        score_range:
+                          min_score: 0
+                          max_score: 1
                         is_default: false
   /predict:
     post:
@@ -116,6 +125,9 @@ paths:
                     file_name: "toothless.jpg"
                     model_id: "liqe_default"
                     quality_score: 54.321
+                    score_range:
+                      min_score: 0
+                      max_score: 100
                     extra_outputs: {}
                     scene: 4
                     distortion: 3
@@ -127,6 +139,9 @@ paths:
                     file_name: "human.jpg"
                     model_id: "musiq_koniq"
                     quality_score: 73.2469
+                    score_range:
+                      min_score: 0
+                      max_score: 100
                     extra_outputs: {}
                     scene: null
                     distortion: null
@@ -184,6 +199,9 @@ paths:
                       - file_name: "a.jpg"
                         model_id: "topiq_nr_koniq"
                         quality_score: 0.8124
+                        score_range:
+                          min_score: 0
+                          max_score: 1
                         extra_outputs: {}
                         scene: null
                         distortion: null
@@ -191,6 +209,9 @@ paths:
                       - file_name: "b.jpg"
                         model_id: "topiq_nr_koniq"
                         quality_score: 0.7031
+                        score_range:
+                          min_score: 0
+                          max_score: 1
                         extra_outputs: {}
                         scene: null
                         distortion: null
@@ -215,11 +236,26 @@ components:
         prob:
           type: number
           description: 失真概率
+    ScoreRange:
+      type: object
+      required:
+        - min_score
+        - max_score
+      properties:
+        min_score:
+          type: number
+          format: float
+          description: 模型原始分数最小值
+        max_score:
+          type: number
+          format: float
+          description: 模型原始分数最大值
     PredictResult:
       type: object
       required:
         - model_id
         - quality_score
+        - score_range
         - extra_outputs
       properties:
         file_name:
@@ -233,6 +269,8 @@ components:
           type: number
           format: float
           description: 模型输出的质量分数
+        score_range:
+          $ref: "#/components/schemas/ScoreRange"
         extra_outputs:
           type: object
           additionalProperties: true
@@ -267,6 +305,7 @@ components:
         - display_name
         - description
         - capabilities
+        - score_range
         - is_default
       properties:
         model_id:
@@ -283,6 +322,8 @@ components:
           description: 当前模型可返回的能力字段列表
           items:
             type: string
+        score_range:
+          $ref: "#/components/schemas/ScoreRange"
         is_default:
           type: boolean
           description: 该模型是否为默认模型
