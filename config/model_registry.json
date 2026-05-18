@@ -40,7 +40,10 @@
       },
       "enabled": true,
       "adapter_options": {
-        "metric_name": "topiq_nr"
+        "metric_name": "topiq_nr",
+        "metric_options": {
+          "backbone_pretrain": false
+        }
       }
     }
   ]

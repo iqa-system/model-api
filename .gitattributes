@@ -1,0 +1,3 @@
+# Bash 脚本部署到 Linux 服务器时必须使用 LF 换行.
+# 如果被 Windows 转成 CRLF, 服务器可能会报 /usr/bin/env: bash\r.
+*.sh text eol=lf

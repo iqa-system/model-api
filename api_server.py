@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from io import BytesIO
+import os
 from pathlib import Path
 from typing import Any
 
@@ -347,5 +348,10 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    # 直接运行 python api_server.py 时, 会启动本地开发服务.
-    uvicorn.run("api_server:app", host="localhost", port=8000, reload=False)
+    # 直接运行 python api_server.py 时, 会启动 Uvicorn 服务.
+    # Debian 服务器部署时必须监听 0.0.0.0, 才能接受来自外部机器的请求.
+    # 如果只监听 localhost 或 127.0.0.1, 服务虽然在本机运行成功, 但外部访问会出现 ECONNREFUSED.
+    # 这里同时支持通过环境变量覆盖默认值, 方便你在不同服务器或端口上演示.
+    host = os.getenv("IQA_API_HOST", "0.0.0.0")
+    port = int(os.getenv("IQA_API_PORT", "8000"))
+    uvicorn.run("api_server:app", host=host, port=port, reload=False)

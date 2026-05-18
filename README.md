@@ -22,6 +22,48 @@ python api_server.py
 
 服务启动时会预加载 `config/model_registry.json` 中所有启用的模型。
 
+## Linux 后台运行
+
+Debian 服务器部署时可以使用 `scripts/` 目录下的脚本一键启停服务。
+
+首次上传到服务器后, 先赋予脚本执行权限:
+
+```bash
+chmod +x scripts/*.sh
+```
+
+后台启动服务:
+
+```bash
+./scripts/start_model_api.sh
+```
+
+查看运行状态和最近日志:
+
+```bash
+./scripts/status_model_api.sh
+```
+
+停止服务:
+
+```bash
+./scripts/stop_model_api.sh
+```
+
+默认配置:
+
+- 服务监听地址: `0.0.0.0`
+- 服务监听端口: `8000`
+- Conda 环境名: `model-api`
+- 日志文件: `logs/model-api.log`
+- PID 文件: `logs/model-api.pid`
+
+如果需要临时修改端口, 可以这样启动:
+
+```bash
+IQA_API_PORT=9000 ./scripts/start_model_api.sh
+```
+
 ## 权重目录
 
 项目约定统一使用根目录下的 `weights/` 保存模型权重。
@@ -69,7 +111,10 @@ python api_server.py
       "weights_path": "cfanet_nr_koniq_res50-9a73138b.pth",
       "enabled": true,
       "adapter_options": {
-        "metric_name": "topiq_nr"
+        "metric_name": "topiq_nr",
+        "metric_options": {
+          "backbone_pretrain": false
+        }
       }
     }
   ]
@@ -87,6 +132,8 @@ python api_server.py
 - `LIQE`: 更偏可解释和泛化. 如果你希望除了总分之外, 还能看到场景类别和失真类别, 它最合适.
 - `MUSIQ`: 更偏多尺度细节和构图感知. 对高分辨率, 构图变化大, 长宽比不固定的自然图像更友好.
 - `TOPIQ-NR`: 更偏语义引导下的通用质量打分. 在自然场景图像上通常兼顾效果和推理效率, 适合做默认候选或快速对比.
+
+部署到离线或内网服务器时, `TOPIQ-NR` 配置里的 `metric_options.backbone_pretrain=false` 可以避免 `timm` 为 ResNet50 骨干网络继续访问 HuggingFace 下载额外权重. 服务仍会加载 `weights/cfanet_nr_koniq_res50-9a73138b.pth` 作为 TOPIQ 主权重.
 
 ## 接口说明
 
