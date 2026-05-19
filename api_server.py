@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from io import BytesIO
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import torch
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -28,6 +28,18 @@ DEFAULT_MODEL_REGISTRY_PATH = BASE_DIR / "config" / "model_registry.json"
 # 允许 Pillow 读取部分被截断的图片.
 # 这对线上服务比较有用, 因为用户上传的图片不一定总是完全规范.
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+# 推理前允许的最长边, 默认 2048 像素.
+# 注意 2 MB 的 JPEG 并不代表解码后很小, 例如高压缩图片可能有几千万像素.
+# LIQE 会把图像展开成很多 224x224 patch, 高分辨率图片会迅速放大内存和显存占用.
+# 因此这里默认按最长边等比例缩放, 优先保证服务稳定可用.
+MAX_INFERENCE_LONG_SIDE = int(os.getenv("IQA_MAX_INFERENCE_LONG_SIDE", "2048"))
+
+try:
+    RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:  # pragma: no cover
+    # 兼容旧版 Pillow. 旧版 Pillow 还没有 Image.Resampling 枚举.
+    RESAMPLE_LANCZOS = Image.LANCZOS
 
 
 class DistortionProb(BaseModel):
@@ -111,11 +123,57 @@ async def _read_upload_image(file: UploadFile) -> Image.Image:
     # convert("RGB") 的目的是统一颜色通道格式, 避免后续模型处理时出现模式差异.
     try:
         content = await file.read()
-        return Image.open(BytesIO(content)).convert("RGB")
+        # 文件体积上限由 Java 后端 SpringBoot 统一控制.
+        # 模型服务这里只负责解码图片, 并根据像素尺寸做推理前缩放保护.
+        image = Image.open(BytesIO(content)).convert("RGB")
+        return _resize_image_for_inference(image, file.filename or "unknown")
     except Exception as exc:  # noqa: BLE001
         # 这里统一把各种底层图片解码错误包装成 400.
         # 对调用方来说, 只需要知道图片不可读即可, 不需要看到过于底层的异常细节.
         raise HTTPException(status_code=400, detail=f"图片读取失败: {file.filename}") from exc
+
+
+def _resize_image_for_inference(image: Image.Image, file_name: str) -> Image.Image:
+    # 这里根据像素尺寸而不是文件体积判断是否需要缩放.
+    # JPEG/PNG 是压缩格式, 2 MB 的文件也可能解码成几千万个像素.
+    # 模型真正消耗的是解码后的像素张量和中间特征, 所以必须看 width 和 height.
+    width, height = image.size
+    long_side = max(width, height)
+
+    if MAX_INFERENCE_LONG_SIDE <= 0 or long_side <= MAX_INFERENCE_LONG_SIDE:
+        print(f"图片已读取: {file_name}, size={width}x{height}")
+        return image
+
+    # thumbnail 会保持原始宽高比, 并且只会缩小不会放大.
+    # 这里先 copy, 避免修改原始 PIL 对象带来隐式副作用.
+    resized_image = image.copy()
+    resized_image.thumbnail(
+        (MAX_INFERENCE_LONG_SIDE, MAX_INFERENCE_LONG_SIDE),
+        RESAMPLE_LANCZOS,
+    )
+    resized_width, resized_height = resized_image.size
+    print(
+        "图片尺寸较大, 已在推理前等比例缩放: "
+        f"{file_name}, original={width}x{height}, resized={resized_width}x{resized_height}"
+    )
+    return resized_image
+
+
+def _raise_inference_error(exc: Exception) -> NoReturn:
+    # 这里把模型底层异常转换成稳定的 JSON 错误响应.
+    # 如果不捕获, Java 后端可能拿到非 JSON 响应, 进而出现 DTO 反序列化失败.
+    # 如果是 CUDA OOM, empty_cache 可以尽量释放 PyTorch 缓存, 方便后续请求继续尝试.
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    print(f"模型推理失败: {type(exc).__name__}: {exc}")
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "模型推理失败, 可能是图片分辨率过大, 内存不足或显存不足. "
+            "请查看模型服务日志确认具体异常."
+        ),
+    ) from exc
 
 
 def _get_registry(request: Request) -> ModelRegistry:
@@ -282,6 +340,10 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
         except ValueError as exc:
             # 这里的 ValueError 一般代表调用方传了未知模型 ID.
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            # 模型推理阶段可能出现 CUDA OOM, CPU 内存不足, 或第三方模型内部错误.
+            # 统一包装成 JSON 响应, 方便 Java 后端识别和展示.
+            _raise_inference_error(exc)
 
         return _build_predict_result(
             file.filename,
@@ -325,7 +387,10 @@ def create_app(model_registry_path: Path | None = None) -> FastAPI:
             # 每张图片都单独读取和推理.
             # 这样即使以后要做更细粒度的错误处理, 这里也比较容易扩展.
             img = await _read_upload_image(file)
-            _, prediction = registry.predict(resolved_model_id, img)
+            try:
+                _, prediction = registry.predict(resolved_model_id, img)
+            except Exception as exc:  # noqa: BLE001
+                _raise_inference_error(exc)
             results.append(
                 _build_predict_result(
                     file.filename,

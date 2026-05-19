@@ -64,6 +64,17 @@ chmod +x scripts/*.sh
 IQA_API_PORT=9000 ./scripts/start_model_api.sh
 ```
 
+如果需要处理高分辨率图片, 可以通过环境变量调整推理前缩放限制:
+
+```bash
+IQA_MAX_INFERENCE_LONG_SIDE=2048 ./scripts/start_model_api.sh
+```
+
+说明:
+
+- 上传文件体积上限由 Java 后端 SpringBoot 统一控制.
+- `IQA_MAX_INFERENCE_LONG_SIDE`: 推理前允许的图片最长边, 默认 `2048` 像素. 超过后会等比例缩小, 以避免高分辨率图片导致内存或显存溢出.
+
 ## 权重目录
 
 项目约定统一使用根目录下的 `weights/` 保存模型权重。
