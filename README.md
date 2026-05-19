@@ -69,10 +69,19 @@ IQA_API_PORT=9000 ./scripts/start_model_api.sh
 项目约定统一使用根目录下的 `weights/` 保存模型权重。
 
 - `LIQE.pt`
+- `ViT-B-32.pt`
 - `musiq_koniq_ckpt-e95806b9.pth`
 - `cfanet_nr_koniq_res50-9a73138b.pth`
 
 如果 `weights_path` 只写文件名，服务会优先到 `weights/` 目录中查找。
+
+`ViT-B-32.pt` 是 LIQE 依赖的 OpenAI CLIP 基础权重. `openai-clip` 默认会把它下载到 `~/.cache/clip/ViT-B-32.pt`. 为了方便离线部署, 当前服务默认要求它和 `LIQE.pt` 放在同一个 `weights/` 目录中. 如果你想把 CLIP 权重放到其它目录, 可以通过环境变量 `LIQE_CLIP_WEIGHTS_DIR` 指定.
+
+从旧服务器缓存复制到项目权重目录的示例:
+
+```bash
+cp ~/.cache/clip/ViT-B-32.pt /home/model-api/weights/ViT-B-32.pt
+```
 
 ## 模型配置
 

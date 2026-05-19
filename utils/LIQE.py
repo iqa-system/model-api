@@ -1,4 +1,6 @@
 from itertools import product
+import os
+from pathlib import Path
 
 import warnings
 # 忽略 pkg_resources 的弃用警告
@@ -20,6 +22,12 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # 失真类型概率阈值, 超过该阈值的失真类型将被保留; 如果没有任何失真类型超过该阈值, 则保留概率最高的一个失真类型
 DISTORTION_PROB_THRESHOLD = 0.10
+
+# LIQE 底层使用 OpenAI CLIP 的 ViT-B/32 作为基础视觉语言模型.
+# openai-clip 默认会把这个文件下载到 ~/.cache/clip/ViT-B-32.pt.
+# 为了让服务器离线部署更稳定, 这里显式要求从项目 weights 目录读取该文件.
+CLIP_MODEL_NAME = "ViT-B/32"
+CLIP_MODEL_FILE_NAME = "ViT-B-32.pt"
 
 scenes = ['animal', 'cityscape', 'human', 'indoor', 'landscape', 'night', 'plant', 'still_life', 'others']
 scene2label = {'animal':0, 'cityscape':1, 'human':2, 'indoor':3, 'landscape':4, 'night':5, 'plant':6, 'still_life':7, 'others':8}
@@ -54,11 +62,39 @@ dists = ['jpeg2000 compression', 'jpeg compression', 'white noise', 'gaussian bl
          'pixelate', 'quantization', 'color blocking', 'sharpness', 'realistic blur', 'realistic noise',
          'underexposure', 'overexposure', 'realistic contrast change', 'other realistic']
 
+
+def _resolve_clip_download_root(ckpt_path: Path) -> Path:
+    # 默认把 CLIP 基础权重和 LIQE.pt 放在同一个目录.
+    # 对当前项目来说, 这个目录通常就是项目根目录下的 weights/.
+    # 如果部署时想把 CLIP 权重单独放到其它目录, 可以通过 LIQE_CLIP_WEIGHTS_DIR 覆盖.
+    configured_root = os.getenv("LIQE_CLIP_WEIGHTS_DIR")
+    clip_root = Path(configured_root).expanduser().resolve() if configured_root else ckpt_path.parent
+    clip_weight_path = clip_root / CLIP_MODEL_FILE_NAME
+
+    # 这里主动检查文件是否存在, 是为了避免 openai-clip 在服务器上悄悄联网下载.
+    # 如果文件缺失, 直接报出应该放置的路径, 排查起来比等待下载失败更清楚.
+    if not clip_weight_path.exists():
+        raise FileNotFoundError(
+            "CLIP 基础权重不存在: "
+            f"{clip_weight_path}. "
+            "请把已下载的 ViT-B-32.pt 复制到该目录, "
+            "或通过环境变量 LIQE_CLIP_WEIGHTS_DIR 指定 CLIP 权重目录."
+        )
+
+    return clip_root
+
 class LIQE(nn.Module):
     def __init__(self, ckpt, device):
         super(LIQE, self).__init__()
-        self.model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
-        checkpoint = torch.load(ckpt, map_location=device)
+        ckpt_path = Path(ckpt).resolve()
+        clip_download_root = _resolve_clip_download_root(ckpt_path)
+        self.model, preprocess = clip.load(
+            CLIP_MODEL_NAME,
+            device=device,
+            jit=False,
+            download_root=str(clip_download_root),
+        )
+        checkpoint = torch.load(ckpt_path, map_location=device)
 
 
         self.model.load_state_dict(checkpoint)
