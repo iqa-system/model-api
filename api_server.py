@@ -140,23 +140,28 @@ def _resize_image_for_inference(image: Image.Image, file_name: str) -> Image.Ima
     width, height = image.size
     long_side = max(width, height)
 
-    if MAX_INFERENCE_LONG_SIDE <= 0 or long_side <= MAX_INFERENCE_LONG_SIDE:
-        print(f"图片已读取: {file_name}, size={width}x{height}")
-        return image
+    processed_image = image
 
-    # thumbnail 会保持原始宽高比, 并且只会缩小不会放大.
-    # 这里先 copy, 避免修改原始 PIL 对象带来隐式副作用.
-    resized_image = image.copy()
-    resized_image.thumbnail(
-        (MAX_INFERENCE_LONG_SIDE, MAX_INFERENCE_LONG_SIDE),
-        RESAMPLE_LANCZOS,
-    )
-    resized_width, resized_height = resized_image.size
+    if 0 < MAX_INFERENCE_LONG_SIDE < long_side:
+        # thumbnail 会保持原始宽高比, 并且只会缩小不会放大.
+        # 这里先 copy, 避免修改原始 PIL 对象带来隐式副作用.
+        processed_image = image.copy()
+        processed_image.thumbnail(
+            (MAX_INFERENCE_LONG_SIDE, MAX_INFERENCE_LONG_SIDE),
+            RESAMPLE_LANCZOS,
+        )
+        resized_width, resized_height = processed_image.size
+        print(
+            "图片尺寸较大, 已在推理前等比例缩放: "
+            f"{file_name}, original={width}x{height}, resized={resized_width}x{resized_height}"
+        )
+
+    final_width, final_height = processed_image.size
     print(
-        "图片尺寸较大, 已在推理前等比例缩放: "
-        f"{file_name}, original={width}x{height}, resized={resized_width}x{resized_height}"
+        "图片预处理完成: "
+        f"{file_name}, original={width}x{height}, final={final_width}x{final_height}"
     )
-    return resized_image
+    return processed_image
 
 
 def _raise_inference_error(exc: Exception) -> NoReturn:

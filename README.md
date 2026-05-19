@@ -153,6 +153,8 @@ cp ~/.cache/clip/ViT-B-32.pt /home/model-api/weights/ViT-B-32.pt
 - `MUSIQ`: 更偏多尺度细节和构图感知. 对高分辨率, 构图变化大, 长宽比不固定的自然图像更友好.
 - `TOPIQ-NR`: 更偏语义引导下的通用质量打分. 在自然场景图像上通常兼顾效果和推理效率, 适合做默认候选或快速对比.
 
+LIQE 内部会在 Tensor 阶段自动处理小尺寸图片. 如果图片任意一边小于 `224` 像素, 会使用边缘像素复制补边到满足 `224x224` patch 窗口要求. 对于原本已经大于等于 `224x224` 的图片, LIQE 仍保留原始 patch 选择算法, 以尽量保持评分一致.
+
 部署到离线或内网服务器时, `TOPIQ-NR` 配置里的 `metric_options.backbone_pretrain=false` 可以避免 `timm` 为 ResNet50 骨干网络继续访问 HuggingFace 下载额外权重. 服务仍会加载 `weights/cfanet_nr_koniq_res50-9a73138b.pth` 作为 TOPIQ 主权重.
 
 ## 接口说明

@@ -105,6 +105,9 @@ class LIQE(nn.Module):
         with torch.no_grad():
             self.text_features = self.model.encode_text(joint_texts)
             self.text_features = self.text_features / self.text_features.norm(dim=1, keepdim=True)
+        # LIQE 原始实现固定使用 224x224 patch 输入 CLIP.
+        # 这里把 patch_size 显式保存为字段, 方便 forward 中统一处理任意尺寸图片.
+        self.patch_size = 224
         self.step = 32
         self.num_patch = 15
         self.normalize = Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
@@ -113,18 +116,17 @@ class LIQE(nn.Module):
     def forward(self, x):
         x = x.to(self.device)
         batch_size = x.size(0)
+        x = self._pad_to_patch_size(x)
         x = self.normalize(x)
-        x = x.unfold(2, 224, self.step).unfold(3, 224, self.step).permute(0, 2, 3, 1, 4, 5).reshape(batch_size, -1, 3, 224, 224)
+        x = x.unfold(2, self.patch_size, self.step).unfold(3, self.patch_size, self.step).permute(0, 2, 3, 1, 4, 5).reshape(batch_size, -1, 3, self.patch_size, self.patch_size)
 
         sel_step = x.size(1) // self.num_patch
-        sel = torch.zeros(self.num_patch)
+        sel = torch.zeros(self.num_patch, device=x.device)
         for i in range(self.num_patch):
             sel[i] = sel_step * i
         sel = sel.long()
         x = x[:, sel, ...]
         x = x.reshape(batch_size*self.num_patch, x.shape[2], x.shape[3], x.shape[4])
-        #num_patch = x.size(1)
-        #x = x.view(-1, x.size(2), x.size(3), x.size(4))
 
         image_features = self.model.encode_image(x)
 
@@ -174,6 +176,27 @@ class LIQE(nn.Module):
                              4 * logits_quality[:, 3] + 5 * logits_quality[:, 4]
 
         return quality, scene_index, distortion_top1, distortions
+
+    def _pad_to_patch_size(self, x):
+        # 补边填充, 支持任意尺寸图片.
+        # torch.unfold 要求被展开的维度不能小于窗口大小.
+        # LIQE 的窗口固定为 224, 因此当输入高度或宽度小于 224 时, 需要先补边.
+        # 使用 replicate 模式复制边缘像素, 可以避免把纯黑或纯白边框引入图像内容.
+        _, _, height, width = x.shape
+        pad_height = max(self.patch_size - height, 0)
+        pad_width = max(self.patch_size - width, 0)
+        if pad_height == 0 and pad_width == 0:
+            return x
+
+        pad_top = pad_height // 2
+        pad_bottom = pad_height - pad_top
+        pad_left = pad_width // 2
+        pad_right = pad_width - pad_left
+        return F.pad(
+            x,
+            (pad_left, pad_right, pad_top, pad_bottom),
+            mode="replicate",
+        )
 
 if __name__ == '__main__':
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
