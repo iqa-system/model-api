@@ -4,7 +4,7 @@
     {
       "id": "liqe_default",
       "display_name": "LIQE Default",
-      "description": "基于 vision-language multitask 的 NR-IQA 模型. 强项是可解释性和泛化能力, 当前服务还能额外输出 scene 与 distortion. 论文报告其在多个 IQA 数据集上优于当时 SOTA, 并且跨数据集对齐能力更强.",
+      "description": "基于 vision-language multitask 的 NR-IQA 模型. 强项是可解释性和泛化能力, 当前服务还能额外输出 scene 与 distortion. 论文报告其在多个 IQA 数据集上优于当时 SOTA, 并且跨数据集对齐能力更强.\n推荐使用场景: 适合需要解释性结果的通用图像质量评估, 例如希望同时查看质量分数、场景类别和失真类型的单图分析。",
       "adapter": "liqe",
       "weights_path": "LIQE.pt",
       "score_range": {
@@ -16,7 +16,7 @@
     {
       "id": "musiq_koniq",
       "display_name": "MUSIQ KonIQ-10k",
-      "description": "多尺度 Transformer 无参考图像质量模型. 能直接处理原生分辨率和不同长宽比图像, 对高分辨率细节和整体构图更友好. 论文在 PaQ-2-PiQ, SPAQ, KonIQ-10k 等大规模数据集上报告了 SOTA 表现.",
+      "description": "多尺度 Transformer 无参考图像质量模型. 能直接处理原生分辨率和不同长宽比图像, 对高分辨率细节和整体构图更友好. 论文在 PaQ-2-PiQ, SPAQ, KonIQ-10k 等大规模数据集上报告了 SOTA 表现.\n推荐使用场景: 适合高分辨率、不同尺寸或不同长宽比图片的整体质量评估, 尤其适合关注构图、细节和真实拍摄图像整体观感的场景。",
       "adapter": "pyiqa",
       "weights_path": "musiq_koniq_ckpt-e95806b9.pth",
       "score_range": {
@@ -31,7 +31,7 @@
     {
       "id": "topiq_nr_koniq",
       "display_name": "TOPIQ-NR KonIQ",
-      "description": "语义引导的 coarse-to-fine 无参考图像质量模型. 强项是让高层语义信息引导局部失真关注, 在自然场景图像上通常兼顾精度与效率. 论文报告其在多数公开 FR 与 NR 基准上达到 better or competitive 表现, 且效率明显更高.",
+      "description": "语义引导的 coarse-to-fine 无参考图像质量模型. 强项是让高层语义信息引导局部失真关注, 在自然场景图像上通常兼顾精度与效率. 论文报告其在多数公开 FR 与 NR 基准上达到 better or competitive 表现, 且效率明显更高.\n推荐使用场景: 适合自然场景图片的快速质量评估和批量评估, 尤其适合需要兼顾语义内容、局部失真和推理效率的场景。",
       "adapter": "pyiqa",
       "weights_path": "cfanet_nr_koniq_res50-9a73138b.pth",
       "score_range": {
